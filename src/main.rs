@@ -1,11 +1,12 @@
 use serde::Deserialize;
 use std;
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Paragraph};
-use ratatui::text::Span;
+use ratatui::layout::{Spacing, Flex};
+use ratatui::widgets::{Block, Paragraph, Borders};
+use ratatui::symbols::merge::MergeStrategy;
 use ratatui::style::Color;
 use color_eyre;
-use crossterm::event::{self, KeyCode, Event, KeyEventKind};
+use crossterm::event::{self, KeyCode, Event, KeyEventKind, KeyModifiers};
 use similar;
 
 #[derive(Clone, Deserialize)]
@@ -67,6 +68,7 @@ struct TUIData {
     passes: Vec<Pass>,
     left: usize,
     right: usize,
+    function: usize,
     block: usize, // Note: the block index is always synced for both passes even one one side may not have a block
 }
 
@@ -84,7 +86,8 @@ fn main() -> color_eyre::Result<()> {
         passes: json_data.passes,
         left: 0,
         right: 1,
-        block: 0
+        function: 0,
+        block: 0,
     };
 
     color_eyre::install()?;
@@ -92,85 +95,108 @@ fn main() -> color_eyre::Result<()> {
         terminal.draw(|frame| render(frame, &tui_data))?;
         if let Event::Key(key) = event::read()? {
             if key.kind == KeyEventKind::Press {
-                match key.code {
-                    KeyCode::Char('q') => break Ok(()),
-                    KeyCode::Left => {
-                        if ((tui_data.left as isize) - 1 >= 0) && ((tui_data.right as isize) - 1 >= 0) {
+                match (key.code, key.modifiers) {
+                    (KeyCode::Char('q'), KeyModifiers::NONE) => break Ok(()),
+                    // Slide the entire diffing window left
+                    (KeyCode::Left, KeyModifiers::NONE) => {
+                        if (tui_data.left > 0) && (tui_data.right > 0) {
                             tui_data.left -= 1;
                             tui_data.right -= 1;
                         }
                     }
-                    KeyCode::Right => {
-                        if ((tui_data.left as isize) + 1 < tui_data.passes.len() as isize) && ((tui_data.right as isize) + 1 < tui_data.passes.len() as isize) {
+                    // Slide the entire diffing window right
+                    (KeyCode::Right, KeyModifiers::NONE) => {
+                        if (tui_data.left + 1 < tui_data.passes.len()) && (tui_data.right + 1 < tui_data.passes.len()) {
                             tui_data.left += 1;
                             tui_data.right += 1;
                         }
                     }
-                    KeyCode::Up => {
+                    // Shrink the size of the diffing window (by modifying the right pane)
+                    (KeyCode::Left, KeyModifiers::SHIFT) => {
+                        if tui_data.left + 1 < tui_data.right {
+                            tui_data.right -= 1;
+                        }
+                    }
+                    // Grow the size of the diffing window (by modifying the right pane)
+                    (KeyCode::Right, KeyModifiers::SHIFT) => {
+                        if tui_data.right + 1 < tui_data.passes.len() {
+                            tui_data.right += 1;
+                        }
+                    }
+                    (KeyCode::Up, KeyModifiers::NONE) => {
                         // TODO: Fix this because it ONLY considers the left pane and that's bad
                         // We probably want to allow this to look at "empty" blocks on either side
-                        if (tui_data.block as isize) - 1 >= 0 {
+                        if tui_data.block > 0 {
                             tui_data.block -= 1;
                         }
                     }
-                    KeyCode::Down => {
+                    (KeyCode::Down, KeyModifiers::NONE) => {
                         // TODO: Same as for "up"
-                        if (tui_data.block as isize) + 1 < (tui_data.passes[tui_data.left].hir.blocks.len() as isize) {
+                        if tui_data.block + 1 < tui_data.passes[tui_data.left].hir.blocks.len() {
                             tui_data.block += 1;
                         }
                     }
-                    _ => {}
+                    (_, _) => {}
                 }
             }
         }
     })
 }
 
-// fn apply_style_to_paragraph(lines: Vec<String>, styles: Vec<Style>) -> Vec<ratatui::text::Line<'_>> {
-//     lines.into_iter()
-//         .zip(styles).
-//         map(|(line, style)| Line::styled(line, style))
-//         .collect::<Vec<_>>()
-// }
-
-// TODO: This function needs to update both the original and changed strings, as well as apply styles for all of the changes for both
-// Gross...
-// fn apply_diff(original: &str, changed: &str) -> String {
-//     let diff = similar::TextDiff::from_lines(original, changed);
-//     let mut result: String = String::new();
-//     for op in diff.ops() {
-//         let sign = match change.tag() {
-//             similar::ChangeTag::Delete => {"-"}
-//             similar::ChangeTag::Insert => {"+"}
-//             similar::ChangeTag::Equal => {" "}
-//         };
-//         result.push_str(&format!("{}{}", sign, change));
-//     }
-//     result
-// }
-
+// FIX: The right side has an extra vertical line, probably from when we enclosed the panes in an overall block. This should be fixed
 // TODO: Don't draw the overall pane when there's no corresponding block on one side
+// TODO: We need a way to cycle between functions. This requires:
+// - finding the function representation in iongraph json
+// - figuring out how we want to render where the functions are (perhaps as a tab above the pass visualization?)
+// - adding a mechanism to cycle between functions (maybe tab?)
+// - adding instructions along the bottom to explain function cycling
 fn render(frame: &mut Frame, data: &TUIData) {
-    let vertical = Layout::vertical([Constraint::Length(1), Constraint::Fill(1)]).spacing(1);
-    let horizontal = Layout::horizontal([Constraint::Percentage(50); 2]).spacing(1);
+    let vertical = Layout::vertical([Constraint::Percentage(10), Constraint::Fill(0)]);
+    let horizontal = Layout::horizontal([Constraint::Percentage(50); 2]).spacing(Spacing::Overlap(1));
     let [top, main] = frame.area().layout(&vertical);
     let [left_area, right_area] = main.layout(&horizontal);
 
-    let title = Line::from_iter([
-        Span::from("HIR Dbg").bold(),
-        Span::from(" (Press 'q' to quit)"),
-    ]);
-    frame.render_widget(title.centered(), top);
+    let header_block = Block::bordered().title("HIR Dbg").title_alignment(Alignment::Center).borders(Borders::ALL);
+    let inner = header_block.inner(top);
+    frame.render_widget(header_block, top);
 
-    let left_title = &data.passes[data.left].name;
-    let right_title = &data.passes[data.right].name;
+    let active_pass_names: Vec<&str> = data.passes[data.left+1..data.right+1].iter().map(|pass| pass.name.as_str()).collect();
+    let row_elements: Vec<&str> = std::iter::empty()
+        .chain(if data.left != 0 { Some("←")} else { None })                      // If we can move to the left, indicate with an arrow
+        .chain(active_pass_names)                                                 // Collect all active pass names  
+        .chain(if data.right != data.passes.len() - 1 { Some("→")} else { None }) // If we can move to the right, indicate with an arrow
+        .collect();
+    
+    let constraints: Vec<Constraint> = row_elements
+      .iter()
+      .map(|elem| Constraint::Length(elem.len() as u16))
+      .collect();
+    let cells = Layout::horizontal(constraints)
+      .flex(Flex::Center)
+      .spacing(3)
+      .split(inner);
+
+    for (cell, label) in cells.iter().zip(row_elements) {
+      frame.render_widget(Paragraph::new(label).centered(), *cell,);
+    }
+
+    let left_title = "Old";
+    let right_title = "New";
+
+    //TODO: Add a way to display which block we are accessing
 
     let left_lines: Vec<&str> = data.passes[data.left].hir.blocks[data.block].instructions.iter().map(|insn| insn.opcode.as_str()).collect();
     let right_lines: Vec<&str> = data.passes[data.right].hir.blocks[data.block].instructions.iter().map(|insn| insn.opcode.as_str()).collect();
 
     let mut left_view: Vec<ratatui::text::Line<'_>> = Vec::new();
     let mut right_view: Vec<ratatui::text::Line<'_>> = Vec::new();
+
+    // TODO: The contents of the views should probably be tables, especially when we choose to format HIR instructions
+    // It might be nice to allow someone to navigate around and select or highlight HIR instructions
     // Do some fancy diff work to align things properly and highlight each side
+    // BUG: Currently, some diffs are captured in a change block and we incorrectly count something as modified or updated when really there was
+    // just one deletion. This should be cleaned up
+    // TODO: Highlight smaller segments for smaller changes. (For instance, if we only change an SSA variable, we should color that differently than the whole line)
     let diff = similar::TextDiff::from_slices(&left_lines, &right_lines);
     for op in diff.ops() {
         match *op {
@@ -212,8 +238,15 @@ fn render(frame: &mut Frame, data: &TUIData) {
         }
     };
     
-    let left_widget = Paragraph::new(left_view).block(Block::bordered().title(left_title.clone()));
-    let right_widget = Paragraph::new(right_view).block(Block::bordered().title(right_title.clone()));
+    let outer = Block::bordered()
+      .merge_borders(MergeStrategy::Exact)
+      .title_bottom(
+          Line::from(" ←/→ Slide • Shift ←/→ Resize • ↑/↓ Change Block • q Quit ").centered()
+      );
+    frame.render_widget(outer, main);
+    
+    let left_widget = Paragraph::new(left_view).block(Block::bordered().title(left_title).merge_borders(MergeStrategy::Exact));
+    let right_widget = Paragraph::new(right_view).block(Block::bordered().title(right_title).merge_borders(MergeStrategy::Exact));
     frame.render_widget(left_widget, left_area);
     frame.render_widget(right_widget, right_area);
 
