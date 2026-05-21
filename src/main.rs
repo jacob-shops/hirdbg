@@ -241,7 +241,7 @@ fn render(frame: &mut Frame, data: &TUIData) {
     let outer = Block::bordered()
       .merge_borders(MergeStrategy::Exact)
       .title_bottom(
-          Line::from(" ←/→ Slide • Shift ←/→ Resize • ↑/↓ Change Block • q Quit ").centered()
+          Line::from("[ ←/→ Slide ] • [ ←/→ Resize ] • [ ↑/↓ Change Block ] • [ q Quit ] ").centered()
       );
     frame.render_widget(outer, main);
     
