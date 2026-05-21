@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use std;
 use ratatui::prelude::*;
-use ratatui::layout::{Spacing, Flex};
+use ratatui::layout::{Flex};
 use ratatui::widgets::{Block, Paragraph, Borders};
 use ratatui::symbols::merge::MergeStrategy;
 use ratatui::style::Color;
@@ -143,12 +143,21 @@ fn main() -> color_eyre::Result<()> {
     })
 }
 
+// TODO: Redesign so that opening a single iongraph file is a "special case" of comparing two.
+// TODO: Figure out how to add tree sitter support for syntax highlighting
+// In this special case, we use the custom rules about how the right pass must be greater than the left.
+// In the general case, we compare two different files and the right pane has no such restriction. Additionally,
+// - the titles of each block are different (representing the branch or something from which they come)
+// - the horizontal div showing "how many passes" we are looking at gets replaced with simpler names and arrows on either side showing what we can navigate to
+// TODO: When this is done, we need to improve the usage description to take one or two iongraph directories.
 // TODO: Don't draw the overall pane when there's no corresponding block on one side
 // TODO: We need a way to cycle between functions. This requires:
-// - finding the function representation in iongraph json
-// - figuring out how we want to render where the functions are (perhaps as a tab above the pass visualization?)
-// - adding a mechanism to cycle between functions (maybe tab?)
-// - adding instructions along the bottom to explain function cycling
+// - finding the function representation in iongraph json (each JSON file in the iongraph represents another function. Right now the names are mangled)
+// - figuring out how we want to render where the functions are (a tab above the pass visualization?)
+// - adding a mechanism to cycle between functions (press tab)
+// - adding instructions along the bottom to explain function cycling (done)
+// - Change program to load a set of iongraph JSONs by passing the directory path rather than an individual file
+// TODO: Add help menu
 fn render(frame: &mut Frame, data: &TUIData) {
     let vertical = Layout::vertical([Constraint::Percentage(10), Constraint::Fill(0)]);
     let horizontal = Layout::horizontal([Constraint::Percentage(50); 2]);
@@ -194,7 +203,9 @@ fn render(frame: &mut Frame, data: &TUIData) {
     // It might be nice to allow someone to navigate around and select or highlight HIR instructions
     // Do some fancy diff work to align things properly and highlight each side
     // BUG: Currently, some diffs are captured in a change block and we incorrectly count something as modified or updated when really there was
-    // just one deletion. This should be cleaned up
+    // just one deletion. This should be cleaned up. This is because we consider any change to a line to be a change. Really we want something more granular.
+    // For instance, if one argument to an instruction changes, we want to highlight that one argument -- not the entire instruction.
+    // Maybe we need a second pass of diffing unfortunately? After we have bigger change blocks, we may want to realign and start to look at argument differences.
     // TODO: Highlight smaller segments for smaller changes. (For instance, if we only change an SSA variable, we should color that differently than the whole line)
     let diff = similar::TextDiff::from_slices(&left_lines, &right_lines);
     for op in diff.ops() {
@@ -240,12 +251,30 @@ fn render(frame: &mut Frame, data: &TUIData) {
     let outer = Block::bordered()
       .merge_borders(MergeStrategy::Exact)
       .title_bottom(
-          Line::from("[ ←/→ Slide ] • [ ←/→ Resize ] • [ ↑/↓ Change Block ] • [ q Quit ] ").centered()
+          Line::from(vec![
+              Span::raw("[ "),
+              Span::styled("←/→", Style::default().bold()),
+              Span::raw(" Slide Analysis ] • [ "),
+              Span::styled("⇧←/⇧→", Style::default().bold()),
+              Span::raw(" Resize Analysis ] • [ "),
+              Span::styled("↑/↓", Style::default().bold()),
+              Span::raw(" Walk Block ] • [ "),
+              Span::styled("⇥", Style::default().bold()),
+              Span::raw(" Select Function ] • [ "),
+              Span::styled("q", Style::default().bold()),
+              Span::raw(" Quit ]"),
+          ]).centered()
       );
     frame.render_widget(outer, main);
     
-    let left_widget = Paragraph::new(left_view).block(Block::bordered().title(left_title).merge_borders(MergeStrategy::Exact));
-    let right_widget = Paragraph::new(right_view).block(Block::new().borders(Borders::TOP | Borders::RIGHT | Borders::BOTTOM).title(right_title).merge_borders(MergeStrategy::Exact));
+    let left_widget = Paragraph::new(left_view).block(Block::bordered()
+        .title(left_title)
+        .merge_borders(MergeStrategy::Exact));
+    let right_widget = Paragraph::new(right_view).block(Block::new()
+        .borders(Borders::TOP | Borders::RIGHT | Borders::BOTTOM)
+        .title(right_title)
+        .merge_borders(MergeStrategy::Exact));
+
     frame.render_widget(left_widget, left_area);
     frame.render_widget(right_widget, right_area);
 
