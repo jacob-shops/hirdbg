@@ -124,14 +124,14 @@ fn main() -> color_eyre::Result<()> {
                         }
                     }
                     (KeyCode::Up, KeyModifiers::NONE) => {
-                        // TODO: Fix this because it ONLY considers the left pane and that's bad
+                        // FIX: This because it ONLY considers the left pane and that's bad when the right pane has more blocks
                         // We probably want to allow this to look at "empty" blocks on either side
                         if tui_data.block > 0 {
                             tui_data.block -= 1;
                         }
                     }
                     (KeyCode::Down, KeyModifiers::NONE) => {
-                        // TODO: Same as for "up"
+                        // FIX: Same as for "up"
                         if tui_data.block + 1 < tui_data.passes[tui_data.left].hir.blocks.len() {
                             tui_data.block += 1;
                         }
@@ -143,7 +143,6 @@ fn main() -> color_eyre::Result<()> {
     })
 }
 
-// FIX: The right side has an extra vertical line, probably from when we enclosed the panes in an overall block. This should be fixed
 // TODO: Don't draw the overall pane when there's no corresponding block on one side
 // TODO: We need a way to cycle between functions. This requires:
 // - finding the function representation in iongraph json
@@ -152,7 +151,7 @@ fn main() -> color_eyre::Result<()> {
 // - adding instructions along the bottom to explain function cycling
 fn render(frame: &mut Frame, data: &TUIData) {
     let vertical = Layout::vertical([Constraint::Percentage(10), Constraint::Fill(0)]);
-    let horizontal = Layout::horizontal([Constraint::Percentage(50); 2]).spacing(Spacing::Overlap(1));
+    let horizontal = Layout::horizontal([Constraint::Percentage(50); 2]);
     let [top, main] = frame.area().layout(&vertical);
     let [left_area, right_area] = main.layout(&horizontal);
 
@@ -246,7 +245,7 @@ fn render(frame: &mut Frame, data: &TUIData) {
     frame.render_widget(outer, main);
     
     let left_widget = Paragraph::new(left_view).block(Block::bordered().title(left_title).merge_borders(MergeStrategy::Exact));
-    let right_widget = Paragraph::new(right_view).block(Block::bordered().title(right_title).merge_borders(MergeStrategy::Exact));
+    let right_widget = Paragraph::new(right_view).block(Block::new().borders(Borders::TOP | Borders::RIGHT | Borders::BOTTOM).title(right_title).merge_borders(MergeStrategy::Exact));
     frame.render_widget(left_widget, left_area);
     frame.render_widget(right_widget, right_area);
 
